@@ -1,6 +1,8 @@
 # Media Sort
 
 A command-line tool for organizing and deduplicating photo collections using content-based image similarity detection.
+[![asciicast](https://asciinema.org/a/C6IpPeFu5i2i8whGn077otGlS.svg)](https://asciinema.org/a/C6IpPeFu5i2i8whGn077otGlS)
+
 
 ## Features
 

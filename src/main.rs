@@ -13,7 +13,7 @@ use std::ffi::CString;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use tch::vision::dinov2::{vit_base, vit_giant, vit_large, vit_small};
+use tch::vision::dinov2::vit_small;
 use tch::vision::imagenet;
 use walkdir::WalkDir;
 
@@ -123,7 +123,7 @@ fn extract_photos(
     media_type: &Media,
     cached_photos: &HashMap<String, PhotoInfo>,
 ) -> HashMap<String, PhotoInfo> {
-    println!("📸 Collecting media...");
+    println!("📸 Collecting media info...");
     let pb = ProgressBar::new(collect_photos(source_dir, &media_type).count() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
