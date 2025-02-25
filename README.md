@@ -1,4 +1,4 @@
-# Photo Organizer
+# Media Sort
 
 A command-line tool for organizing and deduplicating photo collections using content-based image similarity detection.
 
