@@ -3,9 +3,9 @@ use blake3;
 use chrono::{Datelike, NaiveDateTime};
 use clap::Parser;
 use console::style;
-use nom_exif::{ExifIter, MediaParser, MediaSource, ParsedExifEntry, TrackInfo};
 use indicatif::{ProgressBar, ProgressStyle};
 use libc::dlopen;
+use nom_exif::{ExifIter, MediaParser, MediaSource, ParsedExifEntry, TrackInfo};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -62,13 +62,13 @@ fn main() -> Result<()> {
         (&Media::Photo, ".photo_cache")
     };
 
-
     // Try to load photo_infos from cache file
     let cache_path = Path::new(cache_file);
     let mut cached_photos = load_cached_photos(cache_path);
 
     // Extract photos from source directory
-    let photo_infos: HashMap<String, PhotoInfo> = extract_photos(source_dir, media_type, &cached_photos);
+    let photo_infos: HashMap<String, PhotoInfo> =
+        extract_photos(source_dir, media_type, &cached_photos);
     // Update cache with new photo information
     cached_photos.extend(photo_infos.clone());
     // Save photo_infos to cache file
@@ -77,12 +77,10 @@ fn main() -> Result<()> {
     serde_json::to_writer(cache_file, &cached_photos)
         .with_context(|| "Failed to write cache file")?;
 
-
     // Print statistics
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("\n📸 Media Collection Statistics 📸");
     print_stats(&cached_photos)?;
-
 
     // Remove duplicates
     remove_duplicates(&mut cached_photos);
@@ -120,8 +118,11 @@ fn main() -> Result<()> {
     return Ok(());
 }
 
-
-fn extract_photos(source_dir: &Path, media_type: &Media, cached_photos: &HashMap<String, PhotoInfo>) -> HashMap<String, PhotoInfo> {
+fn extract_photos(
+    source_dir: &Path,
+    media_type: &Media,
+    cached_photos: &HashMap<String, PhotoInfo>,
+) -> HashMap<String, PhotoInfo> {
     println!("📸 Collecting media...");
     let pb = ProgressBar::new(collect_photos(source_dir, &media_type).count() as u64);
     pb.set_style(
@@ -151,12 +152,8 @@ fn extract_photos(source_dir: &Path, media_type: &Media, cached_photos: &HashMap
                 _ => format!("random_{:x}", rand::random::<u128>()),
             };
             let exif = match get_exif_info(&path, media_type) {
-                Ok(Some(exif)) => {
-                    Some(exif)
-                },
-                _ => {
-                    None
-                }
+                Ok(Some(exif)) => Some(exif),
+                _ => None,
             };
             let date = get_date_from_exif(&exif).unwrap();
             let size = fs::metadata(&path).unwrap().len();
@@ -627,27 +624,27 @@ fn get_exif_info(path: &Path, media_type: &Media) -> Result<Option<HashMap<Strin
     let info = match media_type {
         Media::Photo => {
             let iter: ExifIter = parser.parse(ms)?;
-            let info = iter.into_iter()
-            .filter_map(|mut x: ParsedExifEntry| {
-                let res = x.take_result();
-                match res {
-                    Ok(v) => Some((
-                        x.tag()
-                            .map(|x| x.to_string())
-                            .unwrap_or_else(|| format!("Unknown(0x{:04x})", x.tag_code())),
-                        v.to_string(),
-                    )),
-                    Err(_) => {
-                        None
+            let info = iter
+                .into_iter()
+                .filter_map(|mut x: ParsedExifEntry| {
+                    let res = x.take_result();
+                    match res {
+                        Ok(v) => Some((
+                            x.tag()
+                                .map(|x| x.to_string())
+                                .unwrap_or_else(|| format!("Unknown(0x{:04x})", x.tag_code())),
+                            v.to_string(),
+                        )),
+                        Err(_) => None,
                     }
-                }
-            })
-            .collect::<HashMap<String, String>>();
+                })
+                .collect::<HashMap<String, String>>();
             Some(info)
         }
         Media::Video => {
             let info: TrackInfo = parser.parse(ms)?;
-            let info = info.into_iter()
+            let info = info
+                .into_iter()
                 .map(|x| (x.0.to_string(), x.1.to_string()))
                 .collect::<HashMap<String, String>>();
             Some(info)
