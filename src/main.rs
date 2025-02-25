@@ -13,20 +13,24 @@ use std::ffi::CString;
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use tch::nn::ModuleT;
-use tch::vision::{dinov2, imagenet};
+use tch::vision::dinov2::{vit_base, vit_giant, vit_large, vit_small};
+use tch::vision::imagenet;
 use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// 源目录路径
+    /// Source directory path
     #[arg(short, long)]
     source: String,
 
-    /// 目标目录路径
+    /// Target directory path
     #[arg(short, long)]
     target: String,
+
+    /// Whether to sort video files
+    #[arg(short, long, default_value_t = false)]
+    video: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
@@ -44,14 +48,81 @@ pub enum Media {
     Other,
 }
 
+const SIMILARITY_THRESHOLD: f32 = 0.999;
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let source_dir = Path::new(&cli.source);
     if !source_dir.exists() {
         anyhow::bail!("Source directory does not exist: {}", cli.source);
     }
+    let (media_type, cache_file) = if cli.video {
+        (&Media::Video, ".video_cache")
+    } else {
+        (&Media::Photo, ".photo_cache")
+    };
 
-    let pb = ProgressBar::new(collect_photos(source_dir).count() as u64);
+
+    // Try to load photo_infos from cache file
+    let cache_path = Path::new(cache_file);
+    let mut cached_photos = load_cached_photos(cache_path);
+
+    // Extract photos from source directory
+    let photo_infos: HashMap<String, PhotoInfo> = extract_photos(source_dir, media_type, &cached_photos);
+    // Update cache with new photo information
+    cached_photos.extend(photo_infos.clone());
+    // Save photo_infos to cache file
+    let cache_path = Path::new(cache_file);
+    let cache_file = fs::File::create(cache_path).with_context(|| "Failed to create cache file")?;
+    serde_json::to_writer(cache_file, &cached_photos)
+        .with_context(|| "Failed to write cache file")?;
+
+
+    // Print statistics
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("\n📸 Photo Collection Statistics 📸");
+    print_stats(&cached_photos)?;
+
+
+    // Remove duplicates
+    remove_duplicates(&mut cached_photos);
+
+    // Print statistics after removing duplicates
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("\n📸 Photo Collection Statistics after Removing Duplicates 📸");
+    print_stats(&cached_photos)?;
+
+
+    // Organize photos to target directory
+    println!("Do you want to organize photos to target directory? [y/N]");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    if input != "y" && input != "yes" {
+        println!("Skipping photo organization.");
+        return Ok(());
+    }
+    println!("📸 Organizing photos...");
+    let target_dir = Path::new(&cli.target);
+    if target_dir.exists() {
+        println!(
+            "Target directory already exists: {}\n Skipping photo organization.",
+            cli.target
+        );
+    } else {
+        organize_photos(&target_dir, &cached_photos)?;
+    }
+
+    // Similar photos search and re-organize
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    similarity_search(&cli.target)?;
+    return Ok(());
+}
+
+
+fn extract_photos(source_dir: &Path, media_type: &Media, cached_photos: &HashMap<String, PhotoInfo>) -> HashMap<String, PhotoInfo> {
+    println!("📸 Collecting photos...");
+    let pb = ProgressBar::new(collect_photos(source_dir, &media_type).count() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -61,29 +132,7 @@ fn main() -> Result<()> {
             .progress_chars("#>-"),
     );
 
-    // Try to load photo_infos from cache file
-    let cache_path = Path::new(".photo_cache");
-    let mut cached_photos = match fs::File::open(cache_path) {
-        Ok(cache_file) => {
-            match serde_json::from_reader::<_, HashMap<String, PhotoInfo>>(cache_file) {
-                Ok(cached_photos) => {
-                    println!("📸 Loading cached photo information...");
-                    cached_photos
-                }
-                Err(_) => {
-                    println!("⚠️  Cache file is corrupted, starting fresh");
-                    HashMap::new()
-                }
-            }
-        }
-        Err(_) => {
-            println!("⚠️ No cache file found, starting fresh");
-            HashMap::new()
-        }
-    };
-
-    println!("📸 Collecting photos...");
-    let photo_infos: HashMap<String, PhotoInfo> = collect_photos(source_dir)
+    collect_photos(source_dir, media_type)
         .par_bridge()
         .filter_map(|path| {
             pb.inc(1);
@@ -110,45 +159,28 @@ fn main() -> Result<()> {
                 },
             ))
         })
-        .collect();
+        .collect()
+}
 
-    // Update cache with new photo information
-    cached_photos.extend(photo_infos.clone());
-    // Save photo_infos to cache file
-    let cache_path = Path::new(".photo_cache");
-    let cache_file = fs::File::create(cache_path).with_context(|| "Failed to create cache file")?;
-    serde_json::to_writer(cache_file, &cached_photos)
-        .with_context(|| "Failed to write cache file")?;
-
-    println!("\n📸 Photo Collection Statistics 📸");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    print_stats(&cached_photos)?;
-    remove_duplicates(&mut cached_photos);
-    println!("\n📸 Photo Collection Statistics after Removing Duplicates 📸");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    print_stats(&cached_photos)?;
-
-    println!("Do you want to organize photos to target directory? [y/N]");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input = input.trim().to_lowercase();
-    if input != "y" && input != "yes" {
-        println!("Skipping photo organization.");
-        return Ok(());
+fn load_cached_photos(cache_path: &Path) -> HashMap<String, PhotoInfo> {
+    match fs::File::open(cache_path) {
+        Ok(cache_file) => {
+            match serde_json::from_reader::<_, HashMap<String, PhotoInfo>>(cache_file) {
+                Ok(cached_photos) => {
+                    println!("📸 Loading cached photo information...");
+                    cached_photos
+                }
+                Err(_) => {
+                    println!("⚠️  Cache file is corrupted, starting fresh");
+                    HashMap::new()
+                }
+            }
+        }
+        Err(_) => {
+            println!("⚠️ No cache file found, starting fresh");
+            HashMap::new()
+        }
     }
-    println!("📸 Organizing photos...");
-    let target_dir = Path::new(&cli.target);
-    if target_dir.exists() {
-        println!(
-            "Target directory already exists: {}\n Skipping photo organization.",
-            cli.target
-        );
-    } else {
-        organize_photos(&target_dir, &cached_photos)?;
-    }
-
-    similarity_search(&cli.target)?;
-    return Ok(());
 }
 
 fn organize_photos(target_dir: &Path, cached_photos: &HashMap<String, PhotoInfo>) -> Result<()> {
@@ -265,7 +297,7 @@ fn similarity_search(target_dir: &String) -> Result<()> {
 
     let device = tch::Device::cuda_if_available();
     let mut vs = tch::nn::VarStore::new(device);
-    let net = Box::new(dinov2::vit_small(&vs.root()));
+    let net = Box::new(vit_small(&vs.root()));
     vs.load("assets/dinov2_vits14.safetensors")?;
 
     let mut always_yes = false;
@@ -285,17 +317,19 @@ fn similarity_search(target_dir: &String) -> Result<()> {
         let start = std::time::Instant::now();
         let features = photos
             .par_iter()
-            .map(|photo| {
+            .filter_map(|photo| {
                 pb.inc(1);
-                tch::no_grad(|| {
-                    imagenet::load_image_and_resize224(photo.to_str().unwrap()).unwrap()
-                })
+                let img = tch::no_grad(|| {
+                    imagenet::load_image_and_resize224(photo.to_str().unwrap())
+                        .context(format!("Failed to load image {}", photo.display()))
+                });
+                if let Ok(img) = img { Some(img) } else { None }
             })
             .collect::<Vec<_>>()
             .chunks(64)
             .map(|chunk| {
                 let tensor = tch::Tensor::stack(&chunk, 0).to(device);
-                let output = tch::no_grad(|| net.forward_t(&tensor, /* train= */ false));
+                let output = tch::no_grad(|| net.extract_features(&tensor));
                 output
             })
             .collect::<Vec<_>>();
@@ -304,11 +338,10 @@ fn similarity_search(target_dir: &String) -> Result<()> {
         println!("Time taken for feature extraction: {:?}", duration);
 
         let features_tensor = tch::Tensor::cat(&features, 0);
+        println!("Features tensor shape: {:?}", features_tensor.size());
         let features_prod = features_tensor.mm(&features_tensor.transpose(1, 0));
-        println!("features_prod: {:?}", features_prod.size());
         let features_norm = features_tensor.linalg_norm(2, -1, true, tch::Kind::Float);
         let features_norm_prod = features_norm.mm(&features_norm.transpose(1, 0));
-        println!("features_norm_prod: {:?}", features_norm_prod.size());
         let similarity = features_prod / features_norm_prod;
         let n = similarity.size()[0] as usize;
         let m = similarity.size()[1] as usize;
@@ -319,19 +352,14 @@ fn similarity_search(target_dir: &String) -> Result<()> {
         let mut similar_pairs = Vec::new();
         for i in 0..n {
             for j in (i + 1)..n {
-                if similarity_data[i * m + j] > 0.999 {
+                if similarity_data[i * m + j] > SIMILARITY_THRESHOLD {
                     similar_pairs.push((i, j, similarity_data[i * m + j]));
                 }
             }
         }
-        // Find pairs of similar images (similarity > 0.9)
-        println!(
-            "\n🔍 Found {} pairs of similar images",
-            style(similar_pairs.len()).bold()
-        );
-
         if similar_pairs.len() == 0 {
             println!("No similar images found");
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
             continue;
         }
 
@@ -381,49 +409,49 @@ fn similarity_search(target_dir: &String) -> Result<()> {
         }
 
         if !always_yes {
-            println!("\n❓ Would you like to proceed with removing these similar files? [y/N/a]");
+            println!("\n❓ Would you like to proceed with removing these similar files? [y/n/a]");
             println!("   y: yes for this group");
-            println!("   N: no (abort)"); 
+            println!("   n: no for skip this group");
             println!("   a: yes for all remaining groups");
-            
+
             let mut input = String::new();
             std::io::stdin().read_line(&mut input).unwrap();
             let input = input.trim().to_lowercase();
-            
+
             match input.as_str() {
                 "y" => (), // Continue with current group
                 "a" => always_yes = true,
                 _ => {
-                    println!("Aborting...");
-                    return Ok(());
+                    continue;
                 }
             }
         }
 
-
-
-
-
-
-        for (to_keep, to_remove, name) in files {
-            if let Err(e) = fs::remove_file(to_remove) {
-                eprintln!("Failed to remove {}: {}", to_remove.display(), e);
-                continue;
+        for (_, to_remove, _) in files.iter() {
+            match trash::delete(to_remove) {
+                Ok(_) => println!("🗑️ Moved to trash: {:?}", to_remove),
+                _ => continue,
             }
+        }
 
-            if let Some(name) = name {
-                let des_path = to_keep.parent().unwrap().join(name);
-                if let Err(e) = fs::rename(to_keep, des_path) {
-                    eprintln!("Failed to rename {}: {}", to_keep.display(), e);
-                } else {
-                    println!(
+        for (to_keep, _, new_name) in files.iter() {
+            if let Some(new_name) = new_name {
+                let dest_path = to_keep.parent().unwrap().join(new_name);
+                if dest_path == **to_keep {
+                    continue;
+                }
+                match fs::rename(to_keep, &dest_path) {
+                    Ok(_) => println!(
                         "✅ Renamed {} → {}",
                         style(to_keep.display()).dim(),
-                        style(name).green()
-                    );
+                        style(dest_path.display()).green()
+                    ),
+                    _ => continue,
                 }
             }
         }
+
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
 
     Ok(())
@@ -535,7 +563,7 @@ fn print_stats(photos: &HashMap<String, PhotoInfo>) -> Result<()> {
     Ok(())
 }
 
-fn collect_photos(source_dir: &Path) -> impl Iterator<Item = PathBuf> {
+fn collect_photos(source_dir: &Path, media_type: &Media) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(source_dir)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -545,8 +573,8 @@ fn collect_photos(source_dir: &Path) -> impl Iterator<Item = PathBuf> {
             let extension = path.extension()?;
             let ext = extension.to_string_lossy().to_lowercase();
 
-            match media_type(&ext) {
-                Media::Photo => Some(path.to_path_buf()),
+            match get_media_type(&ext) {
+                t if t == *media_type => Some(path.to_path_buf()),
                 _ => None,
             }
         })
@@ -607,7 +635,7 @@ fn get_date_from_exif(exif: &Option<HashMap<String, String>>) -> Option<NaiveDat
         .or(Some(NaiveDateTime::UNIX_EPOCH))
 }
 
-fn media_type(extension: &str) -> Media {
+fn get_media_type(extension: &str) -> Media {
     let ext = extension.to_lowercase();
     let photo_exts = [
         // Common web/general formats
