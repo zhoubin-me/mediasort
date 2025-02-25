@@ -1,6 +1,6 @@
 # Media Sort
 
-A command-line tool for organizing and deduplicating photo collections using content-based image similarity detection.
+A command-line tool for organizing and deduplicating photo/video collections using content-based image similarity detection.
 [![asciicast](https://asciinema.org/a/C6IpPeFu5i2i8whGn077otGlS.svg)](https://asciinema.org/a/C6IpPeFu5i2i8whGn077otGlS)
 
 
@@ -52,12 +52,16 @@ export LIBTORCH=/opt/libtorch
 export LD_LIBRARY_PATH=/opt/libtorch/lib:$LD_LIBRARY_PATH
 ```
 
-Then run the program:
+To organize photo files:
 
 ```bash
-cargo run --release -- --source /path/to/source --target /path/to/target
+cargo run --release -- --source /path/to/source --target /path/to/photo_target
 ```
 
+To organize video files:
+```bash
+cargo run --release -- --source /path/to/source --target /path/to/video_target --video
+```
 
 
 
