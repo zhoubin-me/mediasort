@@ -5,8 +5,6 @@ A command-line tool for organizing and deduplicating photo/video collections usi
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/bzhouxyz)
 
-
-
 ## Features
 
 - Recursively scans source directory for photos and videos
