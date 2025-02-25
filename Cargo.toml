@@ -15,8 +15,8 @@ rayon = "1.10.0"
 serde_json = "1.0.139"
 serde = { version = "1.0.218", features = ["derive"] }
 console = "0.15.10"
-tch = { version = "0.19.0", path = "../../repo/tch-rs" }
 libc = "0.2.170"
 trash = "5.2.2"
 nom-exif = "2.4.3"
 rand = "0.9.0"
+tch = { git = "https://github.com/zhoubin-me/tch-rs.git", branch = "main" }

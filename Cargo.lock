@@ -1244,6 +1244,7 @@ dependencies = [
 [[package]]
 name = "tch"
 version = "0.19.0"
+source = "git+https://github.com/zhoubin-me/tch-rs.git?branch=main#c8c20ef1d939e3492635129ca258308d1ca84124"
 dependencies = [
  "half",
  "lazy_static",
@@ -1329,6 +1330,7 @@ checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
 [[package]]
 name = "torch-sys"
 version = "0.19.0"
+source = "git+https://github.com/zhoubin-me/tch-rs.git?branch=main#c8c20ef1d939e3492635129ca258308d1ca84124"
 dependencies = [
  "anyhow",
  "cc",
