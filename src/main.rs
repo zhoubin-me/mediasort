@@ -3,7 +3,7 @@ use blake3;
 use chrono::{Datelike, NaiveDateTime};
 use clap::Parser;
 use console::style;
-use exif::Reader;
+use nom_exif::{ExifIter, MediaParser, MediaSource, ParsedExifEntry, TrackInfo};
 use indicatif::{ProgressBar, ProgressStyle};
 use libc::dlopen;
 use rayon::prelude::*;
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs;
-use std::io::BufReader;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tch::vision::dinov2::{vit_base, vit_giant, vit_large, vit_small};
 use tch::vision::imagenet;
@@ -80,7 +80,7 @@ fn main() -> Result<()> {
 
     // Print statistics
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("\n📸 Photo Collection Statistics 📸");
+    println!("\n📸 Media Collection Statistics 📸");
     print_stats(&cached_photos)?;
 
 
@@ -89,12 +89,11 @@ fn main() -> Result<()> {
 
     // Print statistics after removing duplicates
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("\n📸 Photo Collection Statistics after Removing Duplicates 📸");
+    println!("\n📸 Media Collection Statistics after Removing Duplicates 📸");
     print_stats(&cached_photos)?;
 
-
     // Organize photos to target directory
-    println!("Do you want to organize photos to target directory? [y/N]");
+    println!("Do you want to organize media to target directory? [y/N]");
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     let input = input.trim().to_lowercase();
@@ -102,26 +101,28 @@ fn main() -> Result<()> {
         println!("Skipping photo organization.");
         return Ok(());
     }
-    println!("📸 Organizing photos...");
+    println!("📸 Organizing media...");
     let target_dir = Path::new(&cli.target);
     if target_dir.exists() {
         println!(
-            "Target directory already exists: {}\n Skipping photo organization.",
+            "Target directory already exists: {}\n Skipping media organization.",
             cli.target
         );
     } else {
         organize_photos(&target_dir, &cached_photos)?;
     }
 
-    // Similar photos search and re-organize
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    similarity_search(&cli.target)?;
+    if !cli.video {
+        // Similar photos search and re-organize
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        similarity_search(&cli.target)?;
+    }
     return Ok(());
 }
 
 
 fn extract_photos(source_dir: &Path, media_type: &Media, cached_photos: &HashMap<String, PhotoInfo>) -> HashMap<String, PhotoInfo> {
-    println!("📸 Collecting photos...");
+    println!("📸 Collecting media...");
     let pb = ProgressBar::new(collect_photos(source_dir, &media_type).count() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -145,9 +146,19 @@ fn extract_photos(source_dir: &Path, media_type: &Media, cached_photos: &HashMap
                     }
                 }
             }
-            let hash = calculate_hash(&path).unwrap();
-            let exif = get_exif_info(&path);
-            let date = get_date_from_exif(&exif)?;
+            let hash = match calculate_hash(&path, media_type) {
+                Ok(hash) => hash,
+                _ => format!("random_{:x}", rand::random::<u128>()),
+            };
+            let exif = match get_exif_info(&path, media_type) {
+                Ok(Some(exif)) => {
+                    Some(exif)
+                },
+                _ => {
+                    None
+                }
+            };
+            let date = get_date_from_exif(&exif).unwrap();
             let size = fs::metadata(&path).unwrap().len();
             Some((
                 path.display().to_string(),
@@ -167,7 +178,7 @@ fn load_cached_photos(cache_path: &Path) -> HashMap<String, PhotoInfo> {
         Ok(cache_file) => {
             match serde_json::from_reader::<_, HashMap<String, PhotoInfo>>(cache_file) {
                 Ok(cached_photos) => {
-                    println!("📸 Loading cached photo information...");
+                    println!("📸 Loading cached media information...");
                     cached_photos
                 }
                 Err(_) => {
@@ -257,7 +268,7 @@ fn organize_photos(target_dir: &Path, cached_photos: &HashMap<String, PhotoInfo>
     })?;
 
     pb.finish();
-    println!("\n✨ Photos organized successfully in target directory");
+    println!("\n✨ Media organized successfully in target directory");
     Ok(())
 }
 
@@ -532,15 +543,15 @@ fn print_stats(photos: &HashMap<String, PhotoInfo>) -> Result<()> {
     }
 
     // Print statistics
-    println!("📊 Total photos: {}", style(photos.len()).bold());
+    println!("📊 Total media: {}", style(photos.len()).bold());
     println!(
         "💾 Total size: {:.2} GB",
         style(total_size as f64 / 1_073_741_824.0).bold()
     );
 
-    println!("\n📅 Photos by Year:");
+    println!("\n📅 Media by Year:");
     println!("┌──────┬───────────┐");
-    println!("│ Year │   Photos  │");
+    println!("│ Year │   Media   │");
     println!("├──────┼───────────┤");
     let mut years: Vec<_> = year_counts.iter().collect();
     years.sort_by_key(|&(k, _)| k);
@@ -549,7 +560,7 @@ fn print_stats(photos: &HashMap<String, PhotoInfo>) -> Result<()> {
     }
     println!("└──────┴───────────┘");
 
-    println!("\n🗂️  Photos by Extension:");
+    println!("\n🗂️  Media by Extension:");
     println!("┌──────────┬───────────┐");
     println!("│   Ext    │   Files   │");
     println!("├──────────┼───────────┤");
@@ -580,47 +591,74 @@ fn collect_photos(source_dir: &Path, media_type: &Media) -> impl Iterator<Item =
         })
 }
 
-fn calculate_hash(path: &Path) -> Result<String> {
+fn calculate_hash(path: &Path, media_type: &Media) -> Result<String> {
     let mut file = fs::File::open(path)
         .with_context(|| format!("Failed to open file for hashing: {}", path.display()))?;
 
     let mut hasher = blake3::Hasher::new();
-    std::io::copy(&mut file, &mut hasher)
-        .with_context(|| format!("Failed to read file for hashing: {}", path.display()))?;
+    if media_type == &Media::Video {
+        // Only hash first 1GB if fast mode is enabled
+        let mut buffer = [0u8; 8192];
+        let mut remaining = 1_073_741_824; // 1GB
+        while remaining > 0 {
+            match file.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    let bytes_to_hash = remaining.min(n);
+                    hasher.update(&buffer[..bytes_to_hash]);
+                    remaining -= bytes_to_hash;
+                }
+                Err(e) => return Err(anyhow::anyhow!("Failed to read file for hashing: {}", e)),
+            }
+        }
+    } else {
+        // Hash entire file in non-fast mode
+        std::io::copy(&mut file, &mut hasher)
+            .with_context(|| format!("Failed to read file for hashing: {}", path.display()))?;
+    }
 
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn get_exif_info(path: &Path) -> Option<HashMap<String, String>> {
-    let file = match fs::File::open(path) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("Failed to open file {}: {}", path.display(), e);
-            return None;
-        }
-    };
-    let mut bufreader = BufReader::new(&file);
+fn get_exif_info(path: &Path, media_type: &Media) -> Result<Option<HashMap<String, String>>> {
+    let ms = MediaSource::file_path(path)?;
+    let mut parser = MediaParser::new();
 
-    match Reader::new().read_from_container(&mut bufreader) {
-        Ok(exif) => {
-            let exif_map = exif
-                .fields()
-                .filter_map(|field| {
-                    // Skip MakerNote and Tiff tags since they're usually not useful
-                    match field.tag.to_string() {
-                        tag if tag.contains("MakerNote") || tag.starts_with("Tag(Tiff,") => None,
-                        tag => Some((tag, field.display_value().to_string())),
+    let info = match media_type {
+        Media::Photo => {
+            let iter: ExifIter = parser.parse(ms)?;
+            let info = iter.into_iter()
+            .filter_map(|mut x: ParsedExifEntry| {
+                let res = x.take_result();
+                match res {
+                    Ok(v) => Some((
+                        x.tag()
+                            .map(|x| x.to_string())
+                            .unwrap_or_else(|| format!("Unknown(0x{:04x})", x.tag_code())),
+                        v.to_string(),
+                    )),
+                    Err(_) => {
+                        None
                     }
-                })
-                .collect();
-
-            Some(exif_map)
+                }
+            })
+            .collect::<HashMap<String, String>>();
+            Some(info)
         }
-        Err(_) => {
-            // eprintln!("Error reading EXIF metadata: {} for {}", e, path.display());
+        Media::Video => {
+            let info: TrackInfo = parser.parse(ms)?;
+            let info = info.into_iter()
+                .map(|x| (x.0.to_string(), x.1.to_string()))
+                .collect::<HashMap<String, String>>();
+            Some(info)
+        }
+        _ => {
+            println!("Unsupported media type: {}", path.display());
             None
         }
-    }
+    };
+
+    Ok(info)
 }
 
 fn get_date_from_exif(exif: &Option<HashMap<String, String>>) -> Option<NaiveDateTime> {
@@ -630,7 +668,7 @@ fn get_date_from_exif(exif: &Option<HashMap<String, String>>) -> Option<NaiveDat
         .or_else(|| exif.as_ref().and_then(|e| e.get("DateTime")))
         .or_else(|| exif.as_ref().and_then(|e| e.get("CreateDate")))
         .and_then(|datetime_str| {
-            NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M:%S").ok()
+            NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S%z").ok()
         })
         .or(Some(NaiveDateTime::UNIX_EPOCH))
 }
