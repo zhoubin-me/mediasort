@@ -25,7 +25,7 @@ curl -L https://download.pytorch.org/libtorch/nightly/cpu/libtorch-shared-with-d
 For CUDA:
 
 ```bash
-curl -L https://download.pytorch.org/libtorch/nightly/cuda/libtorch-shared-with-deps-latest.zip -o libtorch-gpu.zip
+curl -L https://download.pytorch.org/libtorch/nightly/cu126/libtorch-shared-with-deps-latest.zip -o libtorch-gpu.zip
 ```
 
 For AMD GPU:
