@@ -44,7 +44,6 @@ fn main() {
 struct AppState {
     source_dir: Option<PathBuf>,
     target_dir: Option<PathBuf>,
-    is_scanning: bool,
     scan_photos: bool,
     photos: HashMap<String, PhotoInfo>,
     continue_review: bool,
@@ -93,13 +92,14 @@ struct Widgets {
     find_similar_button: gtk::Button,
     progress_bar: gtk::ProgressBar,
     status_label: gtk::Label,
-    similar_review_window: Option<gtk::Window>,
+    review_box: gtk::Box,
     image_view1: Option<gtk::Picture>,
     image_view2: Option<gtk::Picture>,
     keep_first_button: Option<gtk::Button>,
     keep_second_button: Option<gtk::Button>,
     skip_button: Option<gtk::Button>,
     auto_button: Option<gtk::Button>,
+    score_label: Option<gtk::Label>,
 }
 
 impl Widgets {
@@ -107,7 +107,7 @@ impl Widgets {
         // Create main window and container
         let window = gtk::ApplicationWindow::new(application);
         window.set_title(Some("Media Sort"));
-        window.set_default_size(800, 600);
+        window.set_default_size(1200, 800);
 
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
         main_box.set_margin_start(10);
@@ -128,6 +128,13 @@ impl Widgets {
         let remove_duplicates_button = button_section.1;
         let sort_copy_button = button_section.2;
         let find_similar_button = button_section.3;
+
+        // Create review box (initially hidden)
+        let review_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        review_box.set_margin_top(10);
+        review_box.set_margin_bottom(10);
+        review_box.set_visible(false); // Initially hidden
+        main_box.append(&review_box);
 
         // Create status area
         let status_area = gtk::Box::new(gtk::Orientation::Vertical, 5);
@@ -161,13 +168,14 @@ impl Widgets {
             find_similar_button,
             progress_bar,
             status_label,
-            similar_review_window: None,
+            review_box,
             image_view1: None,
             image_view2: None,
             keep_first_button: None,
             keep_second_button: None,
             skip_button: None,
             auto_button: None,
+            score_label: None,
         }
     }
 
@@ -403,20 +411,17 @@ impl App {
                 self.widgets
                     .status_label
                     .set_text(&format!("Scan complete! Processed {} files.", total));
-
-                let mut state = self.state.lock().unwrap();
-                state.is_scanning = false;
             }
             Event::RemoveDuplicates => {
                 self.widgets.disable_widgets();
                 self.remove_duplicates();
             }
             Event::DuplicatesRemoved(dup_groups, dup_images) => {
+                self.widgets.enable_widgets();
                 self.widgets.status_label.set_text(&format!(
                     "Found {} duplicate groups and removed {} duplicate images in total",
                     dup_groups, dup_images
                 ));
-                self.widgets.enable_widgets();
             }
             Event::SortAndCopy => {
                 self.widgets.disable_widgets();
@@ -440,7 +445,7 @@ impl App {
             }
             Event::FindSimilar => {
                 self.widgets.disable_widgets();
-                self.find_similar().expect("Failed to find similar images");
+                self.find_similar();
             }
             Event::SimilarFound(similar_pairs) => {
                 if similar_pairs.is_empty() {
@@ -475,6 +480,7 @@ impl App {
                 ));
             }
             Event::ReviewSimilarPair(index, img1, img2, score) => {
+                println!("Reviewing pair index {}", index);
                 self.create_similar_review_ui(index, img1, img2, score);
                 let index = self.current_pair_index.get();
                 let pairs_len = self.similar_pairs.borrow().len();
@@ -503,7 +509,6 @@ impl App {
                 // Update the current index
                 self.current_pair_index.set(index + 1);
                 let next_index = index + 1;
-
                 // Check if we have more pairs to review
                 let pairs_len = self.similar_pairs.borrow().len();
                 if next_index < pairs_len {
@@ -521,6 +526,8 @@ impl App {
                     let _ = self
                         .sender
                         .send(Event::ReviewSimilarPair(next_index, img1, img2, score));
+                } else {
+                    let _ = self.sender.send(Event::SimilarProcessed);
                 }
             }
             Event::AutoProcessRemaining => {
@@ -579,9 +586,8 @@ impl App {
                 let _ = self.sender.send(Event::SimilarProcessed);
             }
             Event::SimilarProcessed => {
-                if let Some(window) = self.widgets.similar_review_window.take() {
-                    window.destroy();
-                }
+                // Hide the review box instead of destroying a window
+                self.widgets.review_box.set_visible(false);
                 self.state.lock().unwrap().continue_review = true;
             }
             Event::SimilarProgress(current, total, status) => {
@@ -591,7 +597,7 @@ impl App {
             }
 
             Event::SimilarReviewComplete => {
-                self.widgets.disable_widgets();
+                self.widgets.enable_widgets();
                 self.widgets
                     .status_label
                     .set_text("Similar image processing complete!");
@@ -602,20 +608,16 @@ impl App {
     fn start_scan(&self) {
         let mut state = self.state.lock().unwrap();
 
-        if state.is_scanning {
-            return;
-        }
-
         if state.source_dir.is_none() {
             self.widgets
                 .status_label
                 .set_text("Please select source directory first.");
+            self.widgets.enable_widgets();
             return;
         }
 
         let source_dir = state.source_dir.clone().unwrap();
         let scan_photos = state.scan_photos;
-        state.is_scanning = true;
 
         // Reset UI
         self.widgets.progress_bar.set_fraction(0.0);
@@ -703,6 +705,8 @@ impl App {
             self.widgets
                 .status_label
                 .set_text("No photos to process. Please scan first.");
+            self.widgets.enable_widgets();
+
             return;
         }
 
@@ -720,9 +724,6 @@ impl App {
         let mut photos = state_guard.photos.clone();
         let sender = self.sender.clone();
         let state_arc = self.state.clone();
-
-        // Drop the guard before spawning the thread
-        drop(state_guard);
 
         thread::spawn(move || {
             save_cached_photos(&cache_path, &photos).expect("Failed to save cached photos");
@@ -756,7 +757,6 @@ impl App {
 
         let photos = state.photos.clone();
         let target_dir = state.target_dir.clone().unwrap();
-        drop(state);
 
         self.widgets
             .status_label
@@ -846,11 +846,15 @@ impl App {
         });
     }
 
-    fn find_similar(&self) -> Result<(), anyhow::Error> {
+    fn find_similar(&self) {
         let target_dir = {
             let state = self.state.lock().unwrap();
             if state.target_dir.is_none() {
-                return Err(anyhow::anyhow!("Please select a target directory first."));
+                self.widgets.enable_widgets();
+                self.widgets
+                    .status_label
+                    .set_text("Please select a target directory first.");
+                return;
             }
             state.target_dir.clone().unwrap()
         };
@@ -904,6 +908,7 @@ impl App {
 
             for (dir, photos) in &photos_by_dir {
                 println!("Directory {:?}: {} photos", dir, photos.len());
+
                 if photos.len() < 2 {
                     continue;
                 }
@@ -980,12 +985,11 @@ impl App {
                     }
                 }
             }
+            println!("Similar review complete");
+            sender_clone
+                .send(Event::SimilarReviewComplete)
+                .expect("Failed to send similar pairs");
         });
-
-        sender
-            .send(Event::SimilarReviewComplete)
-            .expect("Failed to send similar pairs");
-        Ok(())
     }
 
     fn create_similar_review_ui(
@@ -995,40 +999,25 @@ impl App {
         img2: PathBuf,
         score: f32,
     ) {
-        // Clean up any existing window
-        if let Some(window) = self.widgets.similar_review_window.take() {
-            window.destroy();
+        // Clear the review box
+        while let Some(child) = self.widgets.review_box.first_child() {
+            self.widgets.review_box.remove(&child);
         }
 
-        // Create a new window
-        let window = gtk::Window::new();
-        window.set_title(Some(&format!(
-            "Review Similar Images (Similarity: {:.2}%)",
-            score * 100.0
-        )));
-        window.set_default_size(800, 600);
-        window.set_modal(true);
-        window.set_transient_for(Some(&self.widgets.window));
-
-        let main_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        main_box.set_margin_start(10);
-        main_box.set_margin_end(10);
-        main_box.set_margin_top(10);
-        main_box.set_margin_bottom(10);
-        window.set_child(Some(&main_box));
+        // Make the review box visible
+        self.widgets.review_box.set_visible(true);
 
         // Add similarity score label at the top
-        let score_label =
-            gtk::Label::new(Some(&format!("Similarity Score: {:.2}%", score * 100.0)));
-        score_label.set_margin_bottom(10);
+        let score_label = gtk::Label::new(None);
         score_label.set_markup(&format!("<b>Similarity Score: {:.2}%</b>", score * 100.0));
-        main_box.append(&score_label);
+        score_label.set_margin_bottom(10);
+        self.widgets.review_box.append(&score_label);
 
         // Create image container
         let image_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         image_box.set_homogeneous(true);
         image_box.set_vexpand(true);
-        main_box.append(&image_box);
+        self.widgets.review_box.append(&image_box);
 
         // Left image with label
         let left_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
@@ -1074,7 +1063,7 @@ impl App {
         let button_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         button_box.set_homogeneous(true);
         button_box.set_margin_top(10);
-        main_box.append(&button_box);
+        self.widgets.review_box.append(&button_box);
 
         // Add buttons
         let keep_first = gtk::Button::with_label("Keep Image 1");
@@ -1109,16 +1098,13 @@ impl App {
         }));
 
         // Store widgets for later access
-        self.widgets.similar_review_window = Some(window.clone());
         self.widgets.image_view1 = Some(image1);
         self.widgets.image_view2 = Some(image2);
         self.widgets.keep_first_button = Some(keep_first);
         self.widgets.keep_second_button = Some(keep_second);
         self.widgets.skip_button = Some(skip);
         self.widgets.auto_button = Some(auto);
-
-        // Show the window
-        window.present();
+        self.widgets.score_label = Some(score_label);
     }
 }
 
