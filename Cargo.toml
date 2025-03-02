@@ -20,3 +20,7 @@ trash = "5.2.2"
 nom-exif = "2.4.3"
 rand = "0.9.0"
 tch = { git = "https://github.com/zhoubin-me/tch-rs.git", branch = "main" }
+gtk = { version = "0.7.3", package = "gtk4", features = ["v4_10"] }
+glib = "0.18.5"
+home = "0.5.11"
+tokio = "1.43.0"
