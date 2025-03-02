@@ -170,6 +170,26 @@ impl Widgets {
             auto_button: None,
         }
     }
+
+    fn disable_widgets(&self) {
+        self.scan_button.set_sensitive(false);
+        self.remove_duplicates_button.set_sensitive(false);
+        self.sort_copy_button.set_sensitive(false);
+        self.find_similar_button.set_sensitive(false);
+        self.source_path_entry.set_sensitive(false);
+        self.target_path_entry.set_sensitive(false);
+        self.media_switch.set_sensitive(false);
+    }
+
+    fn enable_widgets(&self) {
+        self.scan_button.set_sensitive(true);
+        self.remove_duplicates_button.set_sensitive(true);
+        self.sort_copy_button.set_sensitive(true);
+        self.find_similar_button.set_sensitive(true);
+        self.source_path_entry.set_sensitive(true);
+        self.target_path_entry.set_sensitive(true);
+        self.media_switch.set_sensitive(true);
+    }
 }
 
 //-------------------------------------------------------------------------------
@@ -361,6 +381,7 @@ impl App {
                 }
             }
             Event::StartScan => {
+                self.widgets.disable_widgets();
                 self.start_scan();
             }
             Event::ScanProgress(photo_info, current, total) => {
@@ -377,9 +398,7 @@ impl App {
                     .insert(photo_info.path.display().to_string(), photo_info);
             }
             Event::ScanComplete(total) => {
-                self.widgets.scan_button.set_sensitive(true);
-                self.widgets.remove_duplicates_button.set_sensitive(true);
-                self.widgets.sort_copy_button.set_sensitive(true);
+                self.widgets.enable_widgets();
                 self.widgets.progress_bar.set_fraction(1.0);
                 self.widgets
                     .status_label
@@ -389,6 +408,7 @@ impl App {
                 state.is_scanning = false;
             }
             Event::RemoveDuplicates => {
+                self.widgets.disable_widgets();
                 self.remove_duplicates();
             }
             Event::DuplicatesRemoved(dup_groups, dup_images) => {
@@ -396,9 +416,10 @@ impl App {
                     "Found {} duplicate groups and removed {} duplicate images in total",
                     dup_groups, dup_images
                 ));
-                self.widgets.remove_duplicates_button.set_sensitive(true);
+                self.widgets.enable_widgets();
             }
             Event::SortAndCopy => {
+                self.widgets.disable_widgets();
                 self.sort_and_copy();
             }
             Event::SortProgress(processed, total) => {
@@ -410,14 +431,17 @@ impl App {
                 ));
             }
             Event::SortComplete(total) => {
-                self.widgets.sort_copy_button.set_sensitive(true);
+                self.widgets.enable_widgets();
                 self.widgets.progress_bar.set_fraction(1.0);
                 self.widgets.status_label.set_text(&format!(
                     "Sort and copy complete! Processed {} files.",
                     total
                 ));
             }
-            Event::FindSimilar => if let Ok(_) = self.find_similar() {},
+            Event::FindSimilar => {
+                self.widgets.disable_widgets();
+                self.find_similar().expect("Failed to find similar images");
+            }
             Event::SimilarFound(similar_pairs) => {
                 if similar_pairs.is_empty() {
                     self.widgets
@@ -567,7 +591,7 @@ impl App {
             }
 
             Event::SimilarReviewComplete => {
-                self.widgets.find_similar_button.set_sensitive(true);
+                self.widgets.disable_widgets();
                 self.widgets
                     .status_label
                     .set_text("Similar image processing complete!");
@@ -594,9 +618,6 @@ impl App {
         state.is_scanning = true;
 
         // Reset UI
-        self.widgets.scan_button.set_sensitive(false);
-        self.widgets.remove_duplicates_button.set_sensitive(false);
-        self.widgets.sort_copy_button.set_sensitive(false);
         self.widgets.progress_bar.set_fraction(0.0);
 
         // Clear previous photos
