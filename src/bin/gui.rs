@@ -93,8 +93,6 @@ struct Widgets {
     progress_bar: gtk::ProgressBar,
     status_label: gtk::Label,
     review_box: gtk::Box,
-    image_view1: Option<gtk::Picture>,
-    image_view2: Option<gtk::Picture>,
     keep_first_button: Option<gtk::Button>,
     keep_second_button: Option<gtk::Button>,
     skip_button: Option<gtk::Button>,
@@ -169,8 +167,6 @@ impl Widgets {
             progress_bar,
             status_label,
             review_box,
-            image_view1: None,
-            image_view2: None,
             keep_first_button: None,
             keep_second_button: None,
             skip_button: None,
@@ -452,7 +448,6 @@ impl App {
                     self.widgets
                         .status_label
                         .set_text("No similar images found.");
-                    self.widgets.find_similar_button.set_sensitive(true);
                     self.widgets.progress_bar.set_fraction(0.0);
                     let _ = self.sender.send(Event::SimilarProcessed);
                     return;
@@ -481,7 +476,7 @@ impl App {
             }
             Event::ReviewSimilarPair(index, img1, img2, score) => {
                 println!("Reviewing pair index {}", index);
-                self.create_similar_review_ui(index, img1, img2, score);
+                self.create_similar_review_ui(index);
                 let index = self.current_pair_index.get();
                 let pairs_len = self.similar_pairs.borrow().len();
                 if index >= pairs_len {
@@ -860,7 +855,6 @@ impl App {
         };
 
         let sender = self.sender.clone();
-        self.widgets.find_similar_button.set_sensitive(false);
         self.widgets
             .status_label
             .set_text("Finding similar images...");
@@ -906,8 +900,11 @@ impl App {
             vs.load("assets/dinov2_vits14.safetensors")
                 .expect("Failed to load model");
 
-            for (dir, photos) in &photos_by_dir {
+            for (index, (dir, photos)) in photos_by_dir.iter().enumerate() {
                 println!("Directory {:?}: {} photos", dir, photos.len());
+                if !dir.to_string_lossy().contains("1970-01") {
+                    continue;
+                }
 
                 if photos.len() < 2 {
                     continue;
@@ -926,7 +923,7 @@ impl App {
                         let _ = sender_clone.send(Event::SimilarProgress(
                             x,
                             total,
-                            format!("Calculating features for photos under directory {:?}", dir),
+                            format!("Calculating features for photos under directory {:?}; {}/{} dirs processed", dir, index + 1, photos_by_dir.len()),
                         ));
                         let img = tch::no_grad(|| {
                             imagenet::load_image_and_resize224(photo.to_str().unwrap())
@@ -995,9 +992,6 @@ impl App {
     fn create_similar_review_ui(
         &mut self,
         pair_index: usize,
-        img1: PathBuf,
-        img2: PathBuf,
-        score: f32,
     ) {
         // Clear the review box
         while let Some(child) = self.widgets.review_box.first_child() {
@@ -1007,104 +1001,184 @@ impl App {
         // Make the review box visible
         self.widgets.review_box.set_visible(true);
 
-        // Add similarity score label at the top
-        let score_label = gtk::Label::new(None);
-        score_label.set_markup(&format!("<b>Similarity Score: {:.2}%</b>", score * 100.0));
-        score_label.set_margin_bottom(10);
-        self.widgets.review_box.append(&score_label);
+        // Create a scrolled window to contain all pairs
+        let scrolled_window = gtk::ScrolledWindow::new();
+        scrolled_window.set_vexpand(true);
+        scrolled_window.set_hexpand(true);
+        scrolled_window.set_min_content_height(500);
 
-        // Create image container
-        let image_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        image_box.set_homogeneous(true);
-        image_box.set_vexpand(true);
-        self.widgets.review_box.append(&image_box);
+        // Create a vertical box to hold all the pairs
+        let pairs_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        pairs_box.set_margin_start(10);
+        pairs_box.set_margin_end(10);
+        pairs_box.set_margin_top(10);
+        pairs_box.set_margin_bottom(10);
 
-        // Left image with label
-        let left_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
-        let left_label = gtk::Label::new(Some(&format!(
-            "Image 1: {} (Size: {:.2} MB)",
-            img1.file_name().unwrap_or_default().to_string_lossy(),
-            std::fs::metadata(&img1)
+        scrolled_window.set_child(Some(&pairs_box));
+        self.widgets.review_box.append(&scrolled_window);
+
+        // Add all similar pairs to the scrollable box
+        let similar_pairs = self.similar_pairs.borrow();
+        for (i, (path1, path2, sim_score)) in similar_pairs.iter().enumerate() {
+            // Create a frame for each pair
+            let pair_frame = gtk::Frame::new(None);
+            pair_frame.set_margin_bottom(15);
+
+            // Highlight the current pair
+            if i == pair_index {
+                pair_frame.add_css_class("selected-pair");
+                pair_frame.set_label(Some("Current Pair"));
+            }
+
+            let pair_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
+            pair_box.set_margin_start(10);
+            pair_box.set_margin_end(10);
+            pair_box.set_margin_top(10);
+            pair_box.set_margin_bottom(10);
+
+            // Add similarity score at the top of each pair
+            let score_label = gtk::Label::new(None);
+            score_label.set_markup(&format!("<b>Pair #{}: Similarity Score: {:.2}%</b>", i+1, sim_score * 100.0));
+            score_label.set_margin_bottom(5);
+            pair_box.append(&score_label);
+
+            // Create image container
+            let image_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            image_box.set_homogeneous(true);
+
+            // Determine which image is larger to place on the left
+            let (left_path, right_path) = match (std::fs::metadata(path1), std::fs::metadata(path2)) {
+                (Ok(meta1), Ok(meta2)) => {
+                    if meta1.len() >= meta2.len() {
+                        (path1, path2)
+                    } else {
+                        (path2, path1)
+                    }
+                },
+                _ => (path1, path2), // Default if metadata can't be read
+            };
+
+            // Left image with label
+            let left_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
+            let left_size = std::fs::metadata(left_path)
                 .map(|m| m.len() as f64 / (1024.0 * 1024.0))
-                .unwrap_or(0.0)
-        )));
-        left_box.append(&left_label);
+                .unwrap_or(0.0);
 
-        let image1 = gtk::Picture::new();
-        image1.set_filename(Some(&img1));
-        image1.set_can_shrink(true);
-        image1.set_vexpand(true);
-        image1.set_hexpand(true);
-        image1.set_content_fit(gtk::ContentFit::ScaleDown);
-        left_box.append(&image1);
-        image_box.append(&left_box);
+            let left_label = gtk::Label::new(Some(&format!(
+                "Image 1: {} (Size: {:.2} MB)",
+                left_path.file_name().unwrap_or_default().to_string_lossy(),
+                left_size
+            )));
+            left_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            left_box.append(&left_label);
 
-        // Right image with label
-        let right_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
-        let right_label = gtk::Label::new(Some(&format!(
-            "Image 2: {} (Size: {:.2} MB)",
-            img2.file_name().unwrap_or_default().to_string_lossy(),
-            std::fs::metadata(&img2)
+            let image1 = gtk::Picture::new();
+            image1.set_filename(Some(left_path));
+            image1.set_can_shrink(true);
+            image1.set_height_request(200);
+            image1.set_content_fit(gtk::ContentFit::ScaleDown);
+            left_box.append(&image1);
+            image_box.append(&left_box);
+
+            // Right image with label
+            let right_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
+            let right_size = std::fs::metadata(right_path)
                 .map(|m| m.len() as f64 / (1024.0 * 1024.0))
-                .unwrap_or(0.0)
-        )));
-        right_box.append(&right_label);
+                .unwrap_or(0.0);
 
-        let image2 = gtk::Picture::new();
-        image2.set_filename(Some(&img2));
-        image2.set_can_shrink(true);
-        image2.set_vexpand(true);
-        image2.set_hexpand(true);
-        image2.set_content_fit(gtk::ContentFit::ScaleDown);
-        right_box.append(&image2);
-        image_box.append(&right_box);
+            let right_label = gtk::Label::new(Some(&format!(
+                "Image 2: {} (Size: {:.2} MB)",
+                right_path.file_name().unwrap_or_default().to_string_lossy(),
+                right_size
+            )));
+            right_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            right_box.append(&right_label);
 
-        // Button container
-        let button_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        button_box.set_homogeneous(true);
-        button_box.set_margin_top(10);
-        self.widgets.review_box.append(&button_box);
+            let image2 = gtk::Picture::new();
+            image2.set_filename(Some(right_path));
+            image2.set_can_shrink(true);
+            image2.set_height_request(200);
+            image2.set_content_fit(gtk::ContentFit::ScaleDown);
+            right_box.append(&image2);
+            image_box.append(&right_box);
 
-        // Add buttons
-        let keep_first = gtk::Button::with_label("Keep Image 1");
-        let keep_second = gtk::Button::with_label("Keep Image 2");
-        let skip = gtk::Button::with_label("Skip");
-        let auto = gtk::Button::with_label("Auto Process Remaining");
+            pair_box.append(&image_box);
 
-        button_box.append(&keep_first);
-        button_box.append(&keep_second);
-        button_box.append(&skip);
-        button_box.append(&auto);
+            // Only add action buttons to the current pair
+            if i == pair_index {
+                // Button container
+                let button_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+                button_box.set_homogeneous(true);
+                button_box.set_margin_top(10);
 
-        // Connect button signals
-        let sender = self.sender.clone();
-        keep_first.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
-            let _ = sender.send(Event::KeepImage(pair_index, true));
-        }));
+                // Add buttons
+                let keep_first = gtk::Button::with_label("Keep Image 1");
+                let keep_second = gtk::Button::with_label("Keep Image 2");
+                let skip = gtk::Button::with_label("Skip");
+                let auto = gtk::Button::with_label("Auto Process Remaining");
 
-        let sender = self.sender.clone();
-        keep_second.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
-            let _ = sender.send(Event::KeepImage(pair_index, false));
-        }));
+                button_box.append(&keep_first);
+                button_box.append(&keep_second);
+                button_box.append(&skip);
+                button_box.append(&auto);
 
-        let sender = self.sender.clone();
-        skip.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
-            let _ = sender.send(Event::SkipPair(pair_index));
-        }));
+                // Connect button signals
+                let sender = self.sender.clone();
+                keep_first.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
+                    let _ = sender.send(Event::KeepImage(pair_index, true));
+                }));
 
-        let sender = self.sender.clone();
-        auto.connect_clicked(clone!(@strong sender => move |_| {
-            let _ = sender.send(Event::AutoProcessRemaining);
-        }));
+                let sender = self.sender.clone();
+                keep_second.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
+                    let _ = sender.send(Event::KeepImage(pair_index, false));
+                }));
 
-        // Store widgets for later access
-        self.widgets.image_view1 = Some(image1);
-        self.widgets.image_view2 = Some(image2);
-        self.widgets.keep_first_button = Some(keep_first);
-        self.widgets.keep_second_button = Some(keep_second);
-        self.widgets.skip_button = Some(skip);
-        self.widgets.auto_button = Some(auto);
-        self.widgets.score_label = Some(score_label);
+                let sender = self.sender.clone();
+                skip.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
+                    let _ = sender.send(Event::SkipPair(pair_index));
+                }));
+
+                let sender = self.sender.clone();
+                auto.connect_clicked(clone!(@strong sender => move |_| {
+                    let _ = sender.send(Event::AutoProcessRemaining);
+                }));
+
+                pair_box.append(&button_box);
+
+                // Store widgets for later access
+                self.widgets.keep_first_button = Some(keep_first);
+                self.widgets.keep_second_button = Some(keep_second);
+                self.widgets.skip_button = Some(skip);
+                self.widgets.auto_button = Some(auto);
+                self.widgets.score_label = Some(score_label);
+            }
+
+            pair_frame.set_child(Some(&pair_box));
+            pairs_box.append(&pair_frame);
+        }
+
+        // Add CSS for highlighting the current pair
+        let provider = gtk::CssProvider::new();
+        provider.load_from_data(".selected-pair { border: 2px solid #3584e4; }");
+
+        gtk::style_context_add_provider_for_display(
+            &gtk::gdk::Display::default().expect("Could not get default display"),
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
+        // Scroll to the current pair
+        if let Some(frame) = pairs_box.first_child() {
+            for _ in 0..pair_index {
+                if let Some(next) = frame.next_sibling() {
+                    // Continue to the next sibling
+                    let _ = next;
+                } else {
+                    break;
+                }
+            }
+            // The scrolled window will automatically scroll to show the selected pair
+        }
     }
 }
 
