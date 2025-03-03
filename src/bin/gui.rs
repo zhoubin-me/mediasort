@@ -66,8 +66,8 @@ enum Event {
     SimilarFound(Vec<(PathBuf, PathBuf, f32)>),
     SimilarProgress(usize, usize, String),
     SimilarProcessed,
-    ReviewSimilarPair(usize, PathBuf, PathBuf, f32),
-    KeepImage(usize, bool),
+    ReviewSimilarPair(usize),
+    KeepImage(usize, PathBuf, PathBuf),
     SkipPair(usize),
     AutoProcessRemaining,
     SimilarReviewComplete,
@@ -105,7 +105,7 @@ impl Widgets {
         // Create main window and container
         let window = gtk::ApplicationWindow::new(application);
         window.set_title(Some("Media Sort"));
-        window.set_default_size(1200, 800);
+        window.set_default_size(900, 1200);
 
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
         main_box.set_margin_start(10);
@@ -176,6 +176,10 @@ impl Widgets {
     }
 
     fn disable_widgets(&self) {
+        self.source_path_entry.set_sensitive(false);
+        self.source_button.set_sensitive(false);
+        self.target_path_entry.set_sensitive(false);
+        self.target_button.set_sensitive(false);
         self.scan_button.set_sensitive(false);
         self.remove_duplicates_button.set_sensitive(false);
         self.sort_copy_button.set_sensitive(false);
@@ -186,6 +190,10 @@ impl Widgets {
     }
 
     fn enable_widgets(&self) {
+        self.source_path_entry.set_sensitive(true);
+        self.source_button.set_sensitive(true);
+        self.target_path_entry.set_sensitive(true);
+        self.target_button.set_sensitive(true);
         self.scan_button.set_sensitive(true);
         self.remove_duplicates_button.set_sensitive(true);
         self.sort_copy_button.set_sensitive(true);
@@ -458,23 +466,18 @@ impl App {
                 self.current_pair_index.set(0);
 
                 // Show the first pair
-                let pairs = self.similar_pairs.borrow();
-                if !pairs.is_empty() {
-                    let (img1, img2, score) = &pairs[0];
-                    let _ = self.sender.send(Event::ReviewSimilarPair(
-                        0,
-                        img1.clone(),
-                        img2.clone(),
-                        *score,
-                    ));
+                let similar_pairs_data = self.similar_pairs.borrow().clone();
+                if !similar_pairs_data.is_empty() {
+                    let (img1, img2, score) = &similar_pairs_data[0];
+                    let _ = self.sender.send(Event::ReviewSimilarPair(0));
                 }
 
                 self.widgets.status_label.set_text(&format!(
                     "Found {} similar image pairs. Reviewing...",
-                    pairs.len()
+                    similar_pairs_data.len()
                 ));
             }
-            Event::ReviewSimilarPair(index, img1, img2, score) => {
+            Event::ReviewSimilarPair(index) => {
                 println!("Reviewing pair index {}", index);
                 self.create_similar_review_ui(index);
                 let index = self.current_pair_index.get();
@@ -483,18 +486,45 @@ impl App {
                     let _ = self.sender.send(Event::SimilarProcessed);
                 }
             }
-            Event::KeepImage(index, keep_first) => {
+            Event::KeepImage(index, path_to_keep, path_to_remove) => {
                 // Delete the image that's not kept
                 let pairs = self.similar_pairs.borrow();
                 if index < pairs.len() {
-                    let (img1, img2, _) = &pairs[index];
-                    let to_delete = if keep_first { img2 } else { img1 };
-
                     // Delete the file
-                    if let Err(e) = std::fs::remove_file(to_delete) {
-                        eprintln!("Failed to delete {}: {}", to_delete.display(), e);
+                    let name = match (path_to_keep.file_name(), path_to_remove.file_name()) {
+                        (Some(keep_name), Some(remove_name)) => {
+                            if keep_name.len() < remove_name.len() {
+                                keep_name.to_str()
+                            } else {
+                                remove_name.to_str()
+                            }
+                        }
+                        _ => None,
+                    };
+
+                    match trash::delete(path_to_remove.clone()) {
+                        Ok(_) => println!("🗑️ Moved to trash: {:?}", path_to_remove),
+                        _ => (),
+                    }
+
+                    if let Some(new_name) = name {
+                        let dest_path = path_to_keep.parent().unwrap().join(new_name);
+                        if dest_path != path_to_keep {
+                            match std::fs::rename(path_to_keep.clone(), &dest_path) {
+                                Ok(_) => println!(
+                                    "✅ Renamed {} → {}",
+                                    style(path_to_keep.clone().display()).dim(),
+                                    style(dest_path.display()).green()
+                                ),
+                                _ => (),
+                            }
+                        }
+                    }
+
+                    if let Err(e) = std::fs::remove_file(path_to_remove.clone()) {
+                        eprintln!("Failed to delete {}: {}", path_to_remove.display(), e);
                     } else {
-                        println!("Deleted {}", to_delete.display());
+                        println!("Deleted {}", path_to_remove.display());
                     }
                 }
                 // Instead of calling show_next_pair directly, send an event
@@ -518,9 +548,7 @@ impl App {
                     };
 
                     // Show the next pair
-                    let _ = self
-                        .sender
-                        .send(Event::ReviewSimilarPair(next_index, img1, img2, score));
+                    let _ = self.sender.send(Event::ReviewSimilarPair(next_index));
                 } else {
                     let _ = self.sender.send(Event::SimilarProcessed);
                 }
@@ -901,11 +929,6 @@ impl App {
                 .expect("Failed to load model");
 
             for (index, (dir, photos)) in photos_by_dir.iter().enumerate() {
-                println!("Directory {:?}: {} photos", dir, photos.len());
-                if !dir.to_string_lossy().contains("1970-01") {
-                    continue;
-                }
-
                 if photos.len() < 2 {
                     continue;
                 }
@@ -923,7 +946,7 @@ impl App {
                         let _ = sender_clone.send(Event::SimilarProgress(
                             x,
                             total,
-                            format!("Calculating features for photos under directory {:?}; {}/{} dirs processed", dir, index + 1, photos_by_dir.len()),
+                            format!("Calculating features for photos under directory {:?}: {}/{} processed directories", dir, index + 1, photos_by_dir.len()),
                         ));
                         let img = tch::no_grad(|| {
                             imagenet::load_image_and_resize224(photo.to_str().unwrap())
@@ -989,10 +1012,7 @@ impl App {
         });
     }
 
-    fn create_similar_review_ui(
-        &mut self,
-        pair_index: usize,
-    ) {
+    fn create_similar_review_ui(&mut self, pair_index: usize) {
         // Clear the review box
         while let Some(child) = self.widgets.review_box.first_child() {
             self.widgets.review_box.remove(&child);
@@ -1018,8 +1038,8 @@ impl App {
         self.widgets.review_box.append(&scrolled_window);
 
         // Add all similar pairs to the scrollable box
-        let similar_pairs = self.similar_pairs.borrow();
-        for (i, (path1, path2, sim_score)) in similar_pairs.iter().enumerate() {
+        let similar_pairs_data = self.similar_pairs.borrow().clone();
+        for (i, (path1, path2, sim_score)) in similar_pairs_data.clone().into_iter().enumerate() {
             // Create a frame for each pair
             let pair_frame = gtk::Frame::new(None);
             pair_frame.set_margin_bottom(15);
@@ -1038,7 +1058,11 @@ impl App {
 
             // Add similarity score at the top of each pair
             let score_label = gtk::Label::new(None);
-            score_label.set_markup(&format!("<b>Pair #{}: Similarity Score: {:.2}%</b>", i+1, sim_score * 100.0));
+            score_label.set_markup(&format!(
+                "<b>Pair #{}: Similarity Score: {:.2}%</b>",
+                i + 1,
+                sim_score * 100.0
+            ));
             score_label.set_margin_bottom(5);
             pair_box.append(&score_label);
 
@@ -1047,33 +1071,40 @@ impl App {
             image_box.set_homogeneous(true);
 
             // Determine which image is larger to place on the left
-            let (left_path, right_path) = match (std::fs::metadata(path1), std::fs::metadata(path2)) {
+            let (left_path, right_path) = match (
+                std::fs::metadata(path1.clone()),
+                std::fs::metadata(path2.clone()),
+            ) {
                 (Ok(meta1), Ok(meta2)) => {
                     if meta1.len() >= meta2.len() {
-                        (path1, path2)
+                        (path1.clone(), path2.clone())
                     } else {
-                        (path2, path1)
+                        (path2.clone(), path1.clone())
                     }
-                },
+                }
                 _ => (path1, path2), // Default if metadata can't be read
             };
 
             // Left image with label
             let left_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
-            let left_size = std::fs::metadata(left_path)
+            let left_size = std::fs::metadata(left_path.clone())
                 .map(|m| m.len() as f64 / (1024.0 * 1024.0))
                 .unwrap_or(0.0);
 
             let left_label = gtk::Label::new(Some(&format!(
                 "Image 1: {} (Size: {:.2} MB)",
-                left_path.file_name().unwrap_or_default().to_string_lossy(),
+                left_path
+                    .clone()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
                 left_size
             )));
             left_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             left_box.append(&left_label);
 
             let image1 = gtk::Picture::new();
-            image1.set_filename(Some(left_path));
+            image1.set_filename(Some(left_path.clone()));
             image1.set_can_shrink(true);
             image1.set_height_request(200);
             image1.set_content_fit(gtk::ContentFit::ScaleDown);
@@ -1082,20 +1113,24 @@ impl App {
 
             // Right image with label
             let right_box = gtk::Box::new(gtk::Orientation::Vertical, 5);
-            let right_size = std::fs::metadata(right_path)
+            let right_size = std::fs::metadata(right_path.clone())
                 .map(|m| m.len() as f64 / (1024.0 * 1024.0))
                 .unwrap_or(0.0);
 
             let right_label = gtk::Label::new(Some(&format!(
                 "Image 2: {} (Size: {:.2} MB)",
-                right_path.file_name().unwrap_or_default().to_string_lossy(),
+                right_path
+                    .clone()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
                 right_size
             )));
             right_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             right_box.append(&right_label);
 
             let image2 = gtk::Picture::new();
-            image2.set_filename(Some(right_path));
+            image2.set_filename(Some(right_path.clone()));
             image2.set_can_shrink(true);
             image2.set_height_request(200);
             image2.set_content_fit(gtk::ContentFit::ScaleDown);
@@ -1124,13 +1159,13 @@ impl App {
 
                 // Connect button signals
                 let sender = self.sender.clone();
-                keep_first.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
-                    let _ = sender.send(Event::KeepImage(pair_index, true));
+                keep_first.connect_clicked(clone!(@strong sender, @strong pair_index, @strong left_path, @strong right_path => move |_| {
+                    let _ = sender.send(Event::KeepImage(pair_index, left_path.clone(), right_path.clone()));
                 }));
 
                 let sender = self.sender.clone();
-                keep_second.connect_clicked(clone!(@strong sender, @strong pair_index => move |_| {
-                    let _ = sender.send(Event::KeepImage(pair_index, false));
+                keep_second.connect_clicked(clone!(@strong sender, @strong pair_index, @strong left_path, @strong right_path => move |_| {
+                    let _ = sender.send(Event::KeepImage(pair_index, right_path.clone(), left_path.clone()));
                 }));
 
                 let sender = self.sender.clone();
