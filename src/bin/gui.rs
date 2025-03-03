@@ -131,7 +131,12 @@ impl Widgets {
         let review_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
         review_box.set_margin_top(10);
         review_box.set_margin_bottom(10);
-        review_box.set_visible(false); // Initially hidden
+        review_box.set_visible(true); // Initially hidden
+        // Add a spacer to push status elements to the bottom
+        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        spacer.set_vexpand(true);
+        review_box.append(&spacer);
+
         main_box.append(&review_box);
 
         // Create status area
@@ -146,10 +151,6 @@ impl Widgets {
         status_label.set_halign(gtk::Align::Start);
         status_area.append(&status_label);
 
-        // Add a spacer to push status elements to the bottom
-        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        spacer.set_vexpand(true);
-        main_box.append(&spacer);
         main_box.append(&status_area);
 
         Widgets {
@@ -608,8 +609,6 @@ impl App {
                 let _ = self.sender.send(Event::SimilarProcessed);
             }
             Event::SimilarProcessed => {
-                // Hide the review box instead of destroying a window
-                self.widgets.review_box.set_visible(false);
                 self.state.lock().unwrap().continue_review = true;
             }
             Event::SimilarProgress(current, total, status) => {
@@ -619,6 +618,13 @@ impl App {
             }
 
             Event::SimilarReviewComplete => {
+                while let Some(child) = self.widgets.review_box.last_child() {
+                    self.widgets.review_box.remove(&child);
+                }
+                let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                spacer.set_vexpand(true);
+                self.widgets.review_box.append(&spacer);
+
                 self.widgets.enable_widgets();
                 self.widgets
                     .status_label
@@ -1013,12 +1019,9 @@ impl App {
 
     fn create_similar_review_ui(&mut self, pair_index: usize) {
         // Clear the review box
-        while let Some(child) = self.widgets.review_box.first_child() {
+        while let Some(child) = self.widgets.review_box.last_child() {
             self.widgets.review_box.remove(&child);
         }
-
-        // Make the review box visible
-        self.widgets.review_box.set_visible(true);
 
         // Create a scrolled window to contain all pairs
         let scrolled_window = gtk::ScrolledWindow::new();
