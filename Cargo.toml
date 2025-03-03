@@ -23,3 +23,23 @@ gtk = { version = "0.7.3", package = "gtk4", features = ["v4_10"] }
 glib = "0.18.5"
 home = "0.5.11"
 tokio = "1.43.0"
+
+
+[package.metadata.deb]
+name = "mediasort"         # 软件包名
+maintainer = "zhoubin <zhoubixyz@gmail.com>"
+copyright = "2025, zhoubin"
+license-file = ["LICENSE", "0"] # 许可证文件
+extended-description = """
+这是一个 Rust 编写的工具，打包成 deb 安装包。
+"""
+depends = "libc6" # 依赖项
+section = "utility"
+priority = "optional"
+assets = [
+    ["target/release/mediasort", "/usr/bin/mediasort", "755"],
+    ["README.md", "/usr/share/doc/mediasort/README", "644"],
+    ["LICENSE", "/usr/share/doc/mediasort/LICENSE", "644"],
+    ["assets/style.css", "/usr/share/mediasort/assets/style.css", "644"],
+    ["assets/dinov2_vits14.safetensors", "/usr/share/mediasort/assets/dinov2_vits14.safetensors", "644"],
+]

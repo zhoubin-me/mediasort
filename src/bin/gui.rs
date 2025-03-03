@@ -30,10 +30,25 @@ fn main() {
     );
 
     application.connect_activate(|app| {
+        // Apply CSS styling
+        apply_css();
+
         App::create(app, None);
     });
 
     application.run();
+}
+
+// Add this function to apply CSS styling
+fn apply_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(&std::str::from_utf8(include_bytes!("../../assets/style.css")).expect("Invalid UTF-8 in CSS file"));
+
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().expect("Could not get default display"),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
 //-------------------------------------------------------------------------------
@@ -55,16 +70,16 @@ enum Event {
     TargetDirectorySelected(PathBuf),
     MediaTypeChanged(bool),
     StartScan,
-    ScanProgress(PhotoInfo, usize, usize),
+    ScanProgress(PhotoInfo, usize),
     ScanComplete(usize),
     RemoveDuplicates,
     DuplicatesRemoved(usize, usize),
     SortAndCopy,
-    SortProgress(usize, usize),
+    SortProgress(usize),
     SortComplete(usize),
     FindSimilar,
     SimilarFound(Vec<(PathBuf, PathBuf, f32)>),
-    SimilarProgress(usize, usize, String),
+    SimilarProgress(usize, usize, PathBuf),
     SimilarProcessed,
     ReviewSimilarPair(usize),
     KeepImage(usize, PathBuf, PathBuf),
@@ -105,21 +120,62 @@ impl Widgets {
         // Create main window and container
         let window = gtk::ApplicationWindow::new(application);
         window.set_title(Some("Media Sort"));
-        window.set_default_size(900, 1200);
+        window.set_default_size(1200, 900); // Wider window for side-by-side layout
+        window.add_css_class("main-window");
 
+        // Create a horizontal box as the root container
+        let root_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        root_box.set_margin_start(20);
+        root_box.set_margin_end(20);
+        root_box.set_margin_top(20);
+        root_box.set_margin_bottom(20);
+        window.set_child(Some(&root_box));
+
+        // Create the main box for controls (left side)
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        main_box.set_margin_start(10);
-        main_box.set_margin_end(10);
-        main_box.set_margin_top(10);
-        main_box.set_margin_bottom(10);
-        window.set_child(Some(&main_box));
+        main_box.set_hexpand(false);
+        main_box.set_width_request(400); // Set a minimum width
+        main_box.add_css_class("main-container");
+        root_box.append(&main_box);
 
-        // Build UI Components
+        // Create the review box (right side)
+        let review_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        review_box.set_hexpand(true);
+        review_box.set_margin_top(10);
+        review_box.set_margin_bottom(10);
+        review_box.add_css_class("review-container");
+
+        // Add a placeholder label when no review is active
+        let placeholder = gtk::Label::new(Some("Select images to review"));
+        placeholder.set_vexpand(true);
+        placeholder.set_valign(gtk::Align::Center);
+        placeholder.set_halign(gtk::Align::Center);
+        placeholder.add_css_class("placeholder-text");
+        review_box.append(&placeholder);
+
+        root_box.append(&review_box);
+
+        // Add a header section to the main box
+        let header_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        header_box.set_margin_bottom(15);
+
+        // Add a title label
+        let title_label = gtk::Label::new(Some("Media Sort"));
+        title_label.set_markup("<span size='x-large' weight='bold'>Media Sort</span>");
+        title_label.set_hexpand(true);
+        title_label.set_halign(gtk::Align::Start);
+        header_box.append(&title_label);
+
+        // Create and add media type selector to the header
+        let (media_switch, media_type_label) = create_media_type_selector(&header_box);
+
+        main_box.append(&header_box);
+
+        // Build UI Components for directories
         let (source_path_entry, source_button) =
             create_directory_selector("Source Directory:", &main_box);
         let (target_path_entry, target_button) =
-            create_directory_selector("Target Directory:", &main_box);
-        let (media_switch, media_type_label) = create_media_type_selector(&main_box);
+            create_directory_selector("Target  Directory:", &main_box);
 
         let button_section = create_action_buttons(&main_box);
         let scan_button = button_section.0;
@@ -127,31 +183,38 @@ impl Widgets {
         let sort_copy_button = button_section.2;
         let find_similar_button = button_section.3;
 
-        // Create review box (initially hidden)
-        let review_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        review_box.set_margin_top(10);
-        review_box.set_margin_bottom(10);
-        review_box.set_visible(true); // Initially hidden
-        // Add a spacer to push status elements to the bottom
-        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        spacer.set_vexpand(true);
-        review_box.append(&spacer);
-
-        main_box.append(&review_box);
-
         // Create status area
         let status_area = gtk::Box::new(gtk::Orientation::Vertical, 5);
         status_area.set_margin_top(10);
 
         let progress_bar = gtk::ProgressBar::new();
         progress_bar.set_show_text(true);
+        progress_bar.add_css_class("progress-bar");
         status_area.append(&progress_bar);
 
         let status_label = gtk::Label::new(Some("Ready"));
         status_label.set_halign(gtk::Align::Start);
+        status_label.add_css_class("status-label");
         status_area.append(&status_label);
 
+        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        spacer.set_vexpand(true);
+        main_box.append(&spacer);
+
         main_box.append(&status_area);
+
+        // Add CSS classes to buttons for styling
+        scan_button.add_css_class("action-button");
+        scan_button.add_css_class("scan-button");
+
+        remove_duplicates_button.add_css_class("action-button");
+        remove_duplicates_button.add_css_class("remove-button");
+
+        sort_copy_button.add_css_class("action-button");
+        sort_copy_button.add_css_class("sort-button");
+
+        find_similar_button.add_css_class("action-button");
+        find_similar_button.add_css_class("similar-button");
 
         Widgets {
             window,
@@ -396,14 +459,14 @@ impl App {
                 self.widgets.disable_widgets();
                 self.start_scan();
             }
-            Event::ScanProgress(photo_info, current, total) => {
+            Event::ScanProgress(photo_info, total) => {
                 let mut state = self.state.lock().unwrap();
-                let progress = current as f64 / total as f64;
-
-                self.widgets.progress_bar.set_fraction(progress);
+                let mut current = self.widgets.progress_bar.fraction();
+                current += 1 as f64 / total as f64;
+                self.widgets.progress_bar.set_fraction(current);
                 self.widgets
                     .status_label
-                    .set_text(&format!("Processed {}/{}", current, total));
+                    .set_text(&format!("Processed {}/{}", (current * total as f64) as usize, total));
 
                 state
                     .photos
@@ -431,12 +494,13 @@ impl App {
                 self.widgets.disable_widgets();
                 self.sort_and_copy();
             }
-            Event::SortProgress(processed, total) => {
-                let progress = processed as f64 / total as f64;
-                self.widgets.progress_bar.set_fraction(progress);
+            Event::SortProgress(total) => {
+                let mut current = self.widgets.progress_bar.fraction();
+                current += 1 as f64 / total as f64;
+                self.widgets.progress_bar.set_fraction(current);
                 self.widgets.status_label.set_text(&format!(
                     "Copied {}/{} files to target directory",
-                    processed, total
+                    (current * total as f64) as usize, total
                 ));
             }
             Event::SortComplete(total) => {
@@ -612,24 +676,25 @@ impl App {
                 while let Some(child) = self.widgets.review_box.last_child() {
                     self.widgets.review_box.remove(&child);
                 }
-                let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                spacer.set_vexpand(true);
-                self.widgets.review_box.append(&spacer);
+
+                // Add placeholder back
+                let placeholder = gtk::Label::new(Some("Review Complete"));
+                placeholder.set_vexpand(true);
+                placeholder.set_valign(gtk::Align::Center);
+                placeholder.set_halign(gtk::Align::Center);
+                placeholder.add_css_class("placeholder-text");
+                self.widgets.review_box.append(&placeholder);
+
                 self.state.lock().unwrap().continue_review = true;
             }
-            Event::SimilarProgress(current, total, status) => {
-                let progress_fraction = current as f64 / total as f64;
-                self.widgets.progress_bar.set_fraction(progress_fraction);
-                self.widgets.status_label.set_text(&status);
+            Event::SimilarProgress(index, total, path) => {
+                self.widgets.status_label.set_text(&format!("{}/{}: Processing directory {:?}", index, total, path));
             }
 
             Event::SimilarReviewComplete => {
                 while let Some(child) = self.widgets.review_box.last_child() {
                     self.widgets.review_box.remove(&child);
                 }
-                let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-                spacer.set_vexpand(true);
-                self.widgets.review_box.append(&spacer);
 
                 self.widgets.enable_widgets();
                 self.widgets
@@ -674,7 +739,6 @@ impl App {
         // Start worker thread
         let source_dir_clone = source_dir.clone();
         let cache_path_clone = cache_path.clone();
-        let processed = Arc::new(Mutex::new(0usize));
 
         thread::spawn(move || {
             let cached_photos = load_cached_photos(&cache_path_clone);
@@ -683,18 +747,12 @@ impl App {
                 .par_bridge()
                 .filter_map(|path| {
                     let path_str = path.display().to_string();
-                    let n: usize = {
-                        let mut processed = processed.lock().unwrap();
-                        *processed += 1;
-                        *processed
-                    };
                     if let Some(cached_info) = cached_photos.get(&path_str) {
                         // Check if file size and modified time match to validate cache
                         if let Ok(metadata) = std::fs::metadata(&path) {
                             if metadata.len() == cached_info.size {
                                 let _ = sender.send(Event::ScanProgress(
                                     cached_info.clone(),
-                                    n,
                                     total_files,
                                 ));
                                 return Some(());
@@ -722,7 +780,7 @@ impl App {
                         size,
                     };
 
-                    let _ = sender.send(Event::ScanProgress(photo_info, n, total_files));
+                    let _ = sender.send(Event::ScanProgress(photo_info, total_files));
                     Some(())
                 })
                 .collect::<Vec<_>>();
@@ -730,6 +788,8 @@ impl App {
             // Send completion message
             let _ = sender.send(Event::ScanComplete(total_files));
         });
+        save_cached_photos(&cache_path, &state.photos).expect("Failed to save cached photos");
+
     }
 
     fn remove_duplicates(&self) {
@@ -802,7 +862,6 @@ impl App {
 
         let sender = self.sender.clone();
         let total = photos.len();
-        let processed = Arc::new(Mutex::new(0usize));
 
         thread::spawn(move || {
             let result = photos.values().par_bridge().try_for_each(|photo| {
@@ -865,12 +924,8 @@ impl App {
                     )
                 })?;
 
-                let x = {
-                    let mut processed = processed.lock().unwrap();
-                    *processed += 1;
-                    *processed
-                };
-                let _ = sender.send(Event::SortProgress(x, total));
+
+                let _ = sender.send(Event::SortProgress(total));
                 Ok::<(), anyhow::Error>(())
             });
 
@@ -948,19 +1003,13 @@ impl App {
                 }
 
                 let total = photos.len();
-                let processed = Arc::new(Mutex::new(0usize));
                 let data= photos
                     .par_iter()
                     .filter_map(|photo| {
-                        let x = {
-                            let mut processed = processed.lock().unwrap();
-                            *processed += 1;
-                            *processed
-                        };
                         let _ = sender_clone.send(Event::SimilarProgress(
-                            x,
+                            index,
                             total,
-                            format!("Calculating features for photos under directory {:?}: {}/{} processed directories", dir, index + 1, photos_by_dir.len()),
+                            dir.clone(),
                         ));
                         let img = tch::no_grad(|| {
                             imagenet::load_image_and_resize224(photo.to_str().unwrap())
@@ -1060,6 +1109,7 @@ impl App {
             // Create a frame for each pair
             let pair_frame = gtk::Frame::new(None);
             pair_frame.set_margin_bottom(15);
+            pair_frame.add_css_class("image-pair-frame");
 
             // Highlight the current pair
             if i == pair_index {
@@ -1169,12 +1219,20 @@ impl App {
                 let skip = gtk::Button::with_label("Skip");
                 let auto = gtk::Button::with_label("Auto Process Remaining");
 
-                button_box.append(&keep_first);
-                button_box.append(&keep_second);
-                button_box.append(&skip);
-                button_box.append(&auto);
+                // Add CSS classes to buttons first
+                keep_first.add_css_class("action-button");
+                keep_first.add_css_class("keep-button");
 
-                // Connect button signals
+                keep_second.add_css_class("action-button");
+                keep_second.add_css_class("keep-button");
+
+                skip.add_css_class("action-button");
+                skip.add_css_class("skip-button");
+
+                auto.add_css_class("action-button");
+                auto.add_css_class("auto-button");
+
+                // Then connect button signals
                 let sender = self.sender.clone();
                 keep_first.connect_clicked(clone!(@strong sender, @strong pair_index, @strong left_path, @strong right_path => move |_| {
                     let _ = sender.send(Event::KeepImage(pair_index, left_path.clone(), right_path.clone()));
@@ -1195,6 +1253,11 @@ impl App {
                     let _ = sender.send(Event::AutoProcessRemaining);
                 }));
 
+                button_box.append(&keep_first);
+                button_box.append(&keep_second);
+                button_box.append(&skip);
+                button_box.append(&auto);
+
                 pair_box.append(&button_box);
 
                 // Store widgets for later access
@@ -1211,7 +1274,19 @@ impl App {
 
         // Add CSS for highlighting the current pair
         let provider = gtk::CssProvider::new();
-        provider.load_from_data(".selected-pair { border: 2px solid #3584e4; }");
+        provider.load_from_data("
+            .selected-pair {
+                border: 2px solid #3584e4;
+                border-radius: 8px;
+                background-color: rgba(53, 132, 228, 0.1);
+            }
+
+            .image-pair-frame {
+                border-radius: 6px;
+                border: 1px solid #d3d3d3;
+                background-color: #f9f9f9;
+            }
+        ");
 
         gtk::style_context_add_provider_for_display(
             &gtk::gdk::Display::default().expect("Could not get default display"),
@@ -1257,7 +1332,12 @@ fn create_directory_selector(label_text: &str, parent: &gtk::Box) -> (gtk::Entry
 
 fn create_media_type_selector(parent: &gtk::Box) -> (gtk::Switch, gtk::Label) {
     let box_container = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    box_container.set_margin_top(10);
+    box_container.set_margin_bottom(10);
+    box_container.add_css_class("media-selector");
+
     let label = gtk::Label::new(Some("Media Type:"));
+    label.set_margin_end(10);
     box_container.append(&label);
 
     let media_switch = gtk::Switch::new();
@@ -1265,6 +1345,7 @@ fn create_media_type_selector(parent: &gtk::Box) -> (gtk::Switch, gtk::Label) {
     box_container.append(&media_switch);
 
     let media_type_label = gtk::Label::new(Some("Photos"));
+    media_type_label.set_margin_start(5);
     box_container.append(&media_type_label);
 
     parent.append(&box_container);
@@ -1275,14 +1356,16 @@ fn create_action_buttons(
     parent: &gtk::Box,
 ) -> (gtk::Button, gtk::Button, gtk::Button, gtk::Button) {
     let button_section = gtk::Box::new(gtk::Orientation::Vertical, 5);
-    button_section.set_margin_top(10);
-    button_section.set_margin_bottom(10);
+    button_section.set_margin_top(15);
+    button_section.set_margin_bottom(15);
+    button_section.add_css_class("action-section");
 
     // Add a header label for the actions section
     let actions_label = gtk::Label::new(Some("Actions"));
     actions_label.set_halign(gtk::Align::Start);
-    actions_label.set_margin_bottom(5);
+    actions_label.set_margin_bottom(10);
     actions_label.set_markup("<b>Actions</b>");
+    actions_label.add_css_class("section-header");
     button_section.append(&actions_label);
 
     // Create horizontal button box for the action buttons
@@ -1309,6 +1392,19 @@ fn create_action_buttons(
 
     // Add the button box to the button section
     button_section.append(&button_box);
+
+    // Add CSS classes to buttons
+    scan_button.add_css_class("action-button");
+    scan_button.add_css_class("scan-button");
+
+    remove_duplicates_button.add_css_class("action-button");
+    remove_duplicates_button.add_css_class("remove-button");
+
+    sort_copy_button.add_css_class("action-button");
+    sort_copy_button.add_css_class("sort-button");
+
+    find_similar_button.add_css_class("action-button");
+    find_similar_button.add_css_class("similar-button");
 
     // Add the button section to the main container
     parent.append(&button_section);

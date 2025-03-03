@@ -1,0 +1,286 @@
+/* Main color palette */
+:root {
+  /* Primary colors - more muted blue tones */
+  --primary-color: #4285f4;       /* Google blue - professional */
+  --primary-light: #5e97f6;       /* Slightly lighter blue */
+  --primary-dark: #3367d6;        /* Slightly darker blue */
+
+  /* Secondary colors - more professional */
+  --secondary-color: #34a853;     /* Google green - professional */
+  --warning-color: #fbbc05;       /* Google yellow - professional */
+  --danger-color: #ea4335;        /* Google red - professional */
+
+  /* Background colors */
+  --background-color: #f8f8f8;    /* Very light gray */
+  --card-background: #ffffff;     /* White */
+  --text-color: #3c4043;          /* Dark gray but not black */
+  --text-secondary: #5f6368;      /* Medium gray */
+
+  --border-color: #dadce0;        /* Light gray for borders */
+  --hover-background: #f1f3f4;    /* Slightly darker for hover */
+}
+
+/* Main window styling */
+.main-window {
+  background-color: var(--background-color);
+}
+
+.main-container {
+  background-color: var(--card-background);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 24px;
+}
+
+/* Add spacing between sections */
+.main-container > box {
+  margin-bottom: 20px;
+}
+
+/* Section styling with improved spacing */
+.section-header {
+  color: var(--text-color);
+  font-size: 16px;
+  margin-bottom: 16px;
+  margin-top: 10px;
+}
+
+/* Action section with better spacing */
+.action-section {
+  margin-top: 24px;
+  margin-bottom: 24px;
+  padding: 16px;
+  background-color: var(--background-color);
+  border-radius: 8px;
+}
+
+/* Directory selector containers */
+box.horizontal {
+  margin-bottom: 12px;
+}
+
+/* Button styling - more professional look */
+.action-button {
+  border-radius: 4px;             /* Less rounded corners */
+  font-weight: 500;
+  padding: 8px 16px;
+  transition: all 0.2s ease;
+  color: white;
+  border: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+}
+
+.action-button:hover {
+  filter: brightness(1.1);
+}
+
+.action-button:active {
+  filter: brightness(0.9);
+}
+
+/* Specific button types */
+.scan-button {
+  background-color: var(--primary-color);
+}
+
+.remove-button {
+  background-color: var(--danger-color);
+}
+
+.sort-button {
+  background-color: var(--secondary-color);
+}
+
+.similar-button {
+  background-color: var(--primary-color);
+}
+
+.keep-button {
+  background-color: var(--secondary-color);
+}
+
+.skip-button {
+  background-color: var(--warning-color);
+  color: #5f5b40;                 /* Darker text for contrast on yellow */
+}
+
+.auto-button {
+  background-color: var(--primary-light);
+}
+
+/* Add this to override any GTK default styling */
+button.action-button {
+  background-image: none;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+
+/* Progress bar styling */
+.progress-bar {
+  border-radius: 6px;
+  min-height: 14px;
+  margin: 10px 0;
+  min-width: 600px; /* Significantly wider minimum width */
+  width: 100%; /* Make it take full width of container */
+  max-width: 90vw; /* Prevent overflow on small screens */
+}
+
+.progress-bar progress {
+  background-image: linear-gradient(to right, var(--primary-light), var(--primary-color));
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  min-height: 40px; /* Match the height */
+}
+
+.progress-bar trough {
+  background-color: var(--border-color);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+  min-height: 40px; /* Match the height */
+}
+
+/* Text in progress bar */
+.progress-bar text {
+  color: #ffffff; /* Bright white for the text */
+  font-weight: bold;
+  font-size: 14px; /* Increase font size */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7); /* Stronger shadow for better contrast */
+}
+
+/* Add this to ensure text is visible regardless of progress */
+.progress-bar trough {
+  color: #333333; /* Dark color for text on the empty part */
+}
+
+/* Make sure the text is always visible by adding a background to it */
+.progress-bar label {
+  background-color: rgba(0, 0, 0, 0.3); /* Darker semi-transparent background */
+  border-radius: 4px;
+  padding: 3px 8px;
+  margin: 0 auto;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.3); /* Add a subtle glow */
+}
+
+/* Ensure the text is always on top and stands out */
+.progress-bar {
+  /* Add these properties to position the text properly */
+  -gtk-progress-bar-text-xalign: 0.5; /* Center text horizontally */
+  -gtk-progress-bar-text-yalign: 0.5; /* Center text vertically */
+  font-size: 14px; /* Ensure consistent font size */
+  color: #ffeb3b; /* Bright yellow for high contrast */
+}
+
+/* Status label */
+.status-label {
+  color: var(--text-color);
+  font-size: 16px;
+  font-weight: 500;
+  padding: 8px 0;
+  margin: 5px 0;
+  letter-spacing: 0.2px;
+  border-left: 3px solid var(--primary-color);
+  padding-left: 10px;
+  background-color: rgba(91, 141, 239, 0.05);
+  border-radius: 0 4px 4px 0;
+}
+
+/* Status label variations */
+.status-label.success {
+  color: var(--secondary-color);
+  border-left-color: var(--secondary-color);
+  background-color: rgba(91, 189, 138, 0.05);
+}
+
+.status-label.warning {
+  color: #8a7b3e;
+  border-left-color: var(--warning-color);
+  background-color: rgba(240, 215, 138, 0.1);
+}
+
+.status-label.error {
+  color: var(--danger-color);
+  border-left-color: var(--danger-color);
+  background-color: rgba(230, 124, 130, 0.05);
+}
+
+/* Image review styling */
+.image-pair-frame {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--card-background);
+  transition: all 0.2s ease;
+}
+
+.selected-pair {
+  border: 2px solid var(--primary-color);
+  background-color: rgba(53, 132, 228, 0.05);
+}
+
+/* Entry fields */
+entry {
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px;
+}
+
+entry:focus {
+  border-color: var(--primary-color);
+}
+
+/* Switch styling */
+switch {
+  background-color: var(--border-color);
+  border-radius: 16px;
+}
+
+switch:checked {
+  background-color: var(--primary-color);
+}
+
+switch slider {
+  background-color: white;
+  border-radius: 50%;
+}
+
+/* Disabled state styling */
+button:disabled {
+  opacity: 0.6;
+  background-color: #e0e0e0 !important;
+  color: #9e9e9e !important;
+  box-shadow: none;
+}
+
+entry:disabled {
+  background-color: #f5f5f5;
+  color: #9e9e9e;
+  font-style: italic;
+}
+
+switch:disabled {
+  opacity: 0.7;
+}
+
+switch:disabled slider {
+  background-color: #e0e0e0;
+}
+
+switch:disabled:checked {
+  background-color: #b0b0b0;
+}
+
+/* Specific disabled button types */
+.scan-button:disabled {
+  background-color: #90caf9 !important;
+}
+
+.remove-button:disabled {
+  background-color: #ef9a9a !important;
+}
+
+.sort-button:disabled {
+  background-color: #a5d6a7 !important;
+}
+
+.similar-button:disabled {
+  background-color: #90caf9 !important;
+}
