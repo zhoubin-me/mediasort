@@ -379,7 +379,6 @@ impl App {
             Event::TargetDirectorySelected(path) => {
                 let mut state = self.state.lock().unwrap();
                 state.target_dir = Some(path.clone());
-                state.photos.clear();
                 self.widgets
                     .status_label
                     .set_text(&format!("Target directory: {}", path.display()));
@@ -479,6 +478,7 @@ impl App {
             }
             Event::ReviewSimilarPair(index) => {
                 println!("Reviewing pair index {}", index);
+
                 self.create_similar_review_ui(index);
                 let index = self.current_pair_index.get();
                 let pairs_len = self.similar_pairs.borrow().len();
@@ -609,6 +609,12 @@ impl App {
                 let _ = self.sender.send(Event::SimilarProcessed);
             }
             Event::SimilarProcessed => {
+                while let Some(child) = self.widgets.review_box.last_child() {
+                    self.widgets.review_box.remove(&child);
+                }
+                let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                spacer.set_vexpand(true);
+                self.widgets.review_box.append(&spacer);
                 self.state.lock().unwrap().continue_review = true;
             }
             Event::SimilarProgress(current, total, status) => {
@@ -773,6 +779,7 @@ impl App {
             self.widgets
                 .status_label
                 .set_text("No media files to process. Please scan first.");
+            self.widgets.enable_widgets();
             return;
         }
 
@@ -780,6 +787,7 @@ impl App {
             self.widgets
                 .status_label
                 .set_text("Please select a target directory first.");
+            self.widgets.enable_widgets();
             return;
         }
 
@@ -911,6 +919,7 @@ impl App {
                     if extension != "jpg" && extension != "jpeg" && extension != "png" {
                         continue;
                     }
+
                     photos_by_dir.entry(parent).or_default().push(path.clone());
                 }
             }
@@ -940,7 +949,7 @@ impl App {
 
                 let total = photos.len();
                 let processed = Arc::new(Mutex::new(0usize));
-                let features = photos
+                let data= photos
                     .par_iter()
                     .filter_map(|photo| {
                         let x = {
@@ -957,16 +966,22 @@ impl App {
                             imagenet::load_image_and_resize224(photo.to_str().unwrap())
                                 .context(format!("Failed to load image {}", photo.display()))
                         });
-                        if let Ok(img) = img { Some(img) } else { None }
+                        if let Ok(img) = img { Some((img, photo)) } else { None }
                     })
                     .collect::<Vec<_>>()
                     .chunks(64)
-                    .map(|chunk| {
-                        let tensor = tch::Tensor::stack(&chunk, 0).to(device);
+                    .map(|chunks| {
+                        let tensors = chunks.iter().map(|(img, _)| img).collect::<Vec<_>>();
+                        let photos = chunks.iter().map(|(_, photo)| *photo).collect::<Vec<_>>();
+
+                        let tensor = tch::Tensor::stack(&tensors, 0).to(device);
                         let output = tch::no_grad(|| net.extract_features(&tensor));
-                        output
+                        (photos, output)
                     })
                     .collect::<Vec<_>>();
+
+                let features = data.iter().map(|(_, output)| output).collect::<Vec<_>>();
+                let photos = data.iter().map(|(photos, _)| photos).flatten().copied().collect::<Vec<_>>();
 
                 let features_tensor = tch::Tensor::cat(&features, 0);
                 println!("Features tensor shape: {:?}", features_tensor.size());
