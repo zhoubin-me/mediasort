@@ -1,4 +1,4 @@
-use anyhow::{Context, Error, Result};
+use anyhow::Context;
 use chrono::{Datelike, NaiveDateTime};
 use console::style;
 use glib::{MainContext, clone};
@@ -468,7 +468,6 @@ impl App {
                 // Show the first pair
                 let similar_pairs_data = self.similar_pairs.borrow().clone();
                 if !similar_pairs_data.is_empty() {
-                    let (img1, img2, score) = &similar_pairs_data[0];
                     let _ = self.sender.send(Event::ReviewSimilarPair(0));
                 }
 
@@ -538,7 +537,7 @@ impl App {
                 let pairs_len = self.similar_pairs.borrow().len();
                 if next_index < pairs_len {
                     // Get the next pair
-                    let (img1, img2, score) = {
+                    {
                         let pairs = self.similar_pairs.borrow();
                         (
                             pairs[next_index].0.clone(),
