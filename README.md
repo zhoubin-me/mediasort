@@ -1,7 +1,6 @@
 # Media Sort
 
 A command-line tool for organizing and deduplicating photo/video collections using content-based image similarity detection.
-[![asciicast](https://asciinema.org/a/C6IpPeFu5i2i8whGn077otGlS.svg)](https://asciinema.org/a/C6IpPeFu5i2i8whGn077otGlS)
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/bzhouxyz)
 
